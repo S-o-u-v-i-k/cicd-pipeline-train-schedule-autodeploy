@@ -1,16 +1,49 @@
 pipeline {
     agent any
-    environment {
-        //be sure to replace "bhavukm" with your own Docker Hub username
         DOCKER_IMAGE_NAME = "csouvik187/train-schedule"
     }
+    tools {
+        jdk 'java11'
+    }
     stages {
-        stage('Build') {
-            steps {
-                echo 'Running build automation'
-                sh './gradlew build --no-daemon'
-                archiveArtifacts artifacts: 'dist/trainSchedule.zip'
+        stage('compile') {
+	         steps {
+                // step1 
+                echo 'compiling..'
+		            git url: 'https://github.com/S-o-u-v-i-k/cicd-pipeline-train-schedule-autodeploy'
+		            sh script: '/opt/maven/bin/mvn compile'
+           }
+        }
+        stage('codereview-pmd') {
+	         steps {
+                // step2
+                echo 'codereview..'
+		            sh script: '/opt/maven/bin/mvn -P metrics pmd:pmd'
+           }
+	         post {
+               success {
+		             recordIssues enabledForFailure: true, tool: pmdParser(pattern: '**/target/pmd.xml')
+               }
+           }		
+        }
+        stage('unit-test') {
+	          steps {
+                // step3
+                echo 'unittest..'
+	               sh script: '/opt/maven/bin/mvn test'
             }
+	          post {
+               success {
+                   junit 'target/surefire-reports/*.xml'
+               }
+            }			
+        }
+        stage('package/build-war') {
+	         steps {
+                // step5
+                echo 'package......'
+		            sh script: '/opt/maven/bin/mvn package'	
+           }		
         }
         stage('Build Docker Image') {
             when {
@@ -38,36 +71,13 @@ pipeline {
                 }
             }
         }
-        stage('CanaryDeploy') {
-            when {
-                branch 'master'
-            }
-            environment { 
-                CANARY_REPLICAS = 1
-            }
-            steps {
-                kubernetesDeploy(
-                    kubeconfigId: 'kubeconfig',
-                    configs: 'train-schedule-kube-canary.yml',
-                    enableConfigSubstitution: true
-                )
-            }
-        }
         stage('DeployToProduction') {
             when {
                 branch 'master'
             }
-            environment { 
-                CANARY_REPLICAS = 0
-            }
             steps {
                 input 'Deploy to Production?'
                 milestone(1)
-                kubernetesDeploy(
-                    kubeconfigId: 'kubeconfig',
-                    configs: 'train-schedule-kube-canary.yml',
-                    enableConfigSubstitution: true
-                )
                 kubernetesDeploy(
                     kubeconfigId: 'kubeconfig',
                     configs: 'train-schedule-kube.yml',
